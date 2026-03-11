@@ -21,6 +21,17 @@ const ipcSchemas = {
       electron: z.string(),
     }),
   },
+  'app:getBuildInfo': {
+    req: z.null(),
+    res: z.object({
+      version: z.string(),
+      gitCommit: z.string(),
+      gitBranch: z.string(),
+      buildDate: z.string(),
+      isDevBuild: z.boolean(),
+      forkName: z.string(),
+    }),
+  },
   'workspace:getRoot': {
     req: z.null(),
     res: z.object({

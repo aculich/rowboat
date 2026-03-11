@@ -72,6 +72,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { useBuildInfo } from "@/hooks/useBuildInfo"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -198,6 +199,31 @@ function formatRunTime(ts: string): string {
   if (diffDays < 7) return `${diffDays} d`
   if (diffWeeks < 4) return `${diffWeeks} w`
   return `${Math.max(1, diffMonths)} m`
+}
+
+function SidebarVersion() {
+  const buildInfo = useBuildInfo()
+  if (!buildInfo) return null
+  const versionLabel = buildInfo.version.startsWith("v")
+    ? buildInfo.version
+    : `v${buildInfo.version}`
+  const shortCommit =
+    buildInfo.gitCommit.length >= 7
+      ? buildInfo.gitCommit.slice(0, 7)
+      : buildInfo.gitCommit
+  return (
+    <div className="mt-1 px-2 py-1 text-[10px] text-sidebar-foreground/50 leading-tight">
+      <span className="block truncate">
+        {versionLabel}
+        {buildInfo.isDevBuild && shortCommit ? ` · ${shortCommit}` : ""}
+      </span>
+      {buildInfo.isDevBuild && buildInfo.gitBranch && (
+        <span className="block truncate text-sidebar-foreground/40">
+          {buildInfo.gitBranch}
+        </span>
+      )}
+    </div>
+  )
 }
 
 function SyncStatusBar() {
@@ -560,6 +586,7 @@ export function SidebarContentPanel({
             </button>
           </HelpPopover>
         </div>
+        <SidebarVersion />
       </div>
       <SyncStatusBar />
       <SidebarRail />

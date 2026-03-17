@@ -211,16 +211,34 @@ function SidebarVersion() {
     buildInfo.gitCommit.length >= 7
       ? buildInfo.gitCommit.slice(0, 7)
       : buildInfo.gitCommit
+  const commitUrl =
+    buildInfo.forkName && buildInfo.gitCommit
+      ? `https://github.com/${buildInfo.forkName}/rowboat/commit/${buildInfo.gitCommit}`
+      : buildInfo.forkName && buildInfo.gitBranch
+        ? `https://github.com/${buildInfo.forkName}/rowboat/tree/${encodeURIComponent(buildInfo.gitBranch)}`
+        : null
+  const content = (
+    <span className="truncate block">
+      {versionLabel}
+      {buildInfo.isDevBuild && shortCommit ? ` · ${shortCommit}` : ""}
+      {buildInfo.isDevBuild && buildInfo.gitBranch ? (
+        <span className="text-sidebar-foreground/40"> · {buildInfo.gitBranch}</span>
+      ) : null}
+    </span>
+  )
   return (
     <div className="mt-1 px-2 py-1 text-[10px] text-sidebar-foreground/50 leading-tight">
-      <span className="block truncate">
-        {versionLabel}
-        {buildInfo.isDevBuild && shortCommit ? ` · ${shortCommit}` : ""}
-      </span>
-      {buildInfo.isDevBuild && buildInfo.gitBranch && (
-        <span className="block truncate text-sidebar-foreground/40">
-          {buildInfo.gitBranch}
-        </span>
+      {commitUrl ? (
+        <a
+          href={commitUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="cursor-pointer hover:text-sidebar-foreground/70 hover:underline focus:outline-none focus:underline"
+        >
+          {content}
+        </a>
+      ) : (
+        content
       )}
     </div>
   )

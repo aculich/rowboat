@@ -99,7 +99,7 @@ function getVersions(): {
 }
 
 /**
- * Get build info for version visibility (dev: commit, branch, date; release: version only)
+ * Get build info for version visibility (dev: commit, branch, date, upstream release; release: version only)
  */
 function getBuildInfo(): {
   version: string;
@@ -108,6 +108,7 @@ function getBuildInfo(): {
   buildDate: string;
   isDevBuild: boolean;
   forkName: string;
+  upstreamRelease: string;
 } {
   const isDev = process.env.ROWBOAT_IS_DEV_BUILD === 'true';
   return {
@@ -119,6 +120,7 @@ function getBuildInfo(): {
     buildDate: process.env.ROWBOAT_BUILD_DATE ?? '',
     isDevBuild: isDev,
     forkName: process.env.ROWBOAT_FORK_NAME ?? 'rowboatlabs',
+    upstreamRelease: process.env.ROWBOAT_UPSTREAM_RELEASE ?? '',
   };
 }
 

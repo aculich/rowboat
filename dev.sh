@@ -8,16 +8,21 @@ set -e
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_JSON="$REPO_ROOT/apps/x/package.json"
 
-# Version from apps/x/package.json
-ROWBOAT_DEV_VERSION=$(grep -E '"version"' "$PKG_JSON" | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
-: "${ROWBOAT_DEV_VERSION:=0.1.0}"
-
+# Fetch upstream tags and compute upstream release (e.g. v0.1.60)
 git -C "$REPO_ROOT" fetch upstream --tags 2>/dev/null || true
 MB=$(git -C "$REPO_ROOT" merge-base HEAD upstream/main 2>/dev/null || true)
 if [[ -n "$MB" ]]; then
   ROWBOAT_UPSTREAM_RELEASE=$(git -C "$REPO_ROOT" describe --tags --abbrev=0 "$MB" 2>/dev/null || echo '')
 else
   ROWBOAT_UPSTREAM_RELEASE=''
+fi
+
+# Derive dev version from upstream release (e.g. v0.1.60-dev), or fall back to package.json
+if [[ -n "$ROWBOAT_UPSTREAM_RELEASE" ]]; then
+  ROWBOAT_DEV_VERSION="${ROWBOAT_UPSTREAM_RELEASE}-dev"
+else
+  ROWBOAT_DEV_VERSION=$(grep -E '"version"' "$PKG_JSON" | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+  : "${ROWBOAT_DEV_VERSION:=0.1.0}"
 fi
 
 GIT_COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")

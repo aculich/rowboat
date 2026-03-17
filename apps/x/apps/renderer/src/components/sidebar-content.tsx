@@ -240,11 +240,6 @@ function SidebarVersion() {
       ) : (
         content
       )}
-      {buildInfo.isDevBuild && buildInfo.upstreamRelease ? (
-        <div className="mt-0.5 text-sidebar-foreground/40">
-          Based on upstream {buildInfo.upstreamRelease}
-        </div>
-      ) : null}
     </div>
   )
 }

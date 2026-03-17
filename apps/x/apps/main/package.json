@@ -8,6 +8,7 @@
     "license": "Apache-2.0",
     "scripts": {
         "start": "electron .",
+        "start:inspect": "electron --inspect .",
         "build": "rm -rf dist && tsc && node bundle.mjs",
         "package": "electron-forge package",
         "make": "electron-forge make"

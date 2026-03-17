@@ -7,6 +7,7 @@ export interface BuildInfo {
   buildDate: string;
   isDevBuild: boolean;
   forkName: string;
+  upstreamRelease?: string;
 }
 
 export function useBuildInfo(): BuildInfo | null {

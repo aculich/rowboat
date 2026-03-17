@@ -30,6 +30,7 @@ const ipcSchemas = {
       buildDate: z.string(),
       isDevBuild: z.boolean(),
       forkName: z.string(),
+      upstreamRelease: z.string().optional(),
     }),
   },
   'workspace:getRoot': {

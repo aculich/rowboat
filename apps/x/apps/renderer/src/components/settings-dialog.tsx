@@ -162,6 +162,12 @@ function AboutSettings() {
                 <dd className="inline">{buildInfo.buildDate}</dd>
               </div>
             )}
+            {buildInfo.upstreamRelease && (
+              <div>
+                <dt className="inline font-medium text-foreground">Based on upstream: </dt>
+                <dd className="inline">{buildInfo.upstreamRelease}</dd>
+              </div>
+            )}
           </dl>
         </div>
       )}

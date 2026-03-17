@@ -14,6 +14,25 @@ import { emitOAuthEvent } from './ipc.js';
 
 const REDIRECT_URI = 'http://localhost:8080/oauth/callback';
 
+/**
+ * Extract a user-facing error message, preferring the cause message when the top-level
+ * is generic (e.g. "invalid response encountered" with code OAUTH_INVALID_RESPONSE).
+ */
+function getOAuthErrorMessage(error: unknown): string {
+  const msg = error instanceof Error ? error.message : 'Unknown error';
+  const code = error != null && typeof error === 'object' && 'code' in error
+    ? (error as { code?: string }).code
+    : undefined;
+  if (code === 'OAUTH_INVALID_RESPONSE' && error != null && typeof error === 'object' && 'cause' in error) {
+    const cause = (error as { cause?: unknown }).cause;
+    const causeMsg = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : undefined;
+    if (causeMsg) {
+      return causeMsg;
+    }
+  }
+  return msg;
+}
+
 // Store active OAuth flows (state -> { codeVerifier, provider, config })
 const activeFlows = new Map<string, {
   codeVerifier: string;
@@ -167,6 +186,11 @@ export async function connectProvider(provider: string, clientId?: string): Prom
     // Get or create OAuth configuration
     const config = await getProviderConfiguration(provider, clientId);
 
+    // Persist Google client ID so it survives restarts and failed token exchanges
+    if (provider === 'google' && clientId) {
+      await oauthRepo.upsert(provider, { clientId });
+    }
+
     // Generate PKCE codes
     const { verifier: codeVerifier, challenge: codeChallenge } = await oauthClient.generatePKCE();
     const state = oauthClient.generateState();
@@ -186,8 +210,8 @@ export async function connectProvider(provider: string, clientId?: string): Prom
     });
 
     // Create callback server
-    const { server } = await createAuthServer(8080, async (code, receivedState) => {
-      // Validate state
+    const { server } = await createAuthServer(8080, async (callbackUrl) => {
+      const receivedState = callbackUrl.searchParams.get('state');
       if (receivedState !== state) {
         throw new Error('Invalid state parameter - possible CSRF attack');
       }
@@ -198,10 +222,7 @@ export async function connectProvider(provider: string, clientId?: string): Prom
       }
 
       try {
-        // Build callback URL for token exchange
-        const callbackUrl = new URL(`${REDIRECT_URI}?code=${code}&state=${receivedState}`);
-
-        // Exchange code for tokens
+        // Use full callback URL (includes iss, scope, etc.) so openid-client validation succeeds
         console.log(`[OAuth] Exchanging authorization code for tokens (${provider})...`);
         const tokens = await oauthClient.exchangeCodeForTokens(
           flow.config,
@@ -230,7 +251,15 @@ export async function connectProvider(provider: string, clientId?: string): Prom
         emitOAuthEvent({ provider, success: true });
       } catch (error) {
         console.error('OAuth token exchange failed:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        // Log cause chain for debugging (e.g. OAUTH_INVALID_RESPONSE -> OperationProcessingError)
+        let cause: unknown = error;
+        while (cause != null && typeof cause === 'object' && 'cause' in cause) {
+          cause = (cause as { cause?: unknown }).cause;
+          if (cause != null) {
+            console.error('[OAuth] Caused by:', cause);
+          }
+        }
+        const errorMessage = getOAuthErrorMessage(error);
         emitOAuthEvent({ provider, success: false, error: errorMessage });
         throw error;
       } finally {
@@ -317,7 +346,7 @@ export async function getAccessToken(provider: string): Promise<string | null> {
         // Refresh token, preserving existing scopes
         const existingScopes = tokens.scopes;
         const refreshedTokens = await oauthClient.refreshTokens(config, tokens.refresh_token, existingScopes);
-        await oauthRepo.upsert(provider, { tokens });
+        await oauthRepo.upsert(provider, { tokens: refreshedTokens });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Token refresh failed';
         await oauthRepo.upsert(provider, { error: message });

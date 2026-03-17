@@ -141,9 +141,10 @@ export async function initiateConnection(toolkitSlug: string): Promise<{
         };
         composioAccountsRepo.saveAccount(account);
 
-        // Set up callback server
+        // Set up callback server (cleanupTimeout assigned after server creation)
+        // eslint-disable-next-line prefer-const -- assigned once after createAuthServer
         let cleanupTimeout: NodeJS.Timeout;
-        const { server } = await createAuthServer(8081, async (_code, _state) => {
+        const { server } = await createAuthServer(8081, async (_callbackUrl) => {
             // OAuth callback received - sync the account status
             try {
                 const accountStatus = await composioClient.getConnectedAccount(connectedAccountId);

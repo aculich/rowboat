@@ -258,6 +258,7 @@ const ipcSchemas = {
       config: z.record(z.string(), z.object({
         connected: z.boolean(),
         error: z.string().nullable().optional(),
+        clientId: z.string().nullable().optional(),
       })),
     }),
   },

@@ -491,6 +491,7 @@ function App() {
   const editorPathRef = useRef<string | null>(null)
   const fileLoadRequestIdRef = useRef(0)
   const initialContentByPathRef = useRef<Map<string, string>>(new Map())
+  const mtimeByPathRef = useRef<Map<string, number>>(new Map())
 
   // Global navigation history (back/forward) across views (chat/file/graph/task)
   const historyRef = useRef<{ back: ViewState[]; forward: ViewState[] }>({ back: [], forward: [] })
@@ -738,6 +739,7 @@ function App() {
 
   const removeEditorCacheForPath = useCallback((path: string) => {
     editorContentByPathRef.current.delete(path)
+    mtimeByPathRef.current.delete(path)
     setEditorContentByPath((prev) => {
       if (!(path in prev)) return prev
       const next = { ...prev }
@@ -887,19 +889,6 @@ function App() {
       setLastSaved(null)
       return
     }
-    if (selectedPath.endsWith('.md')) {
-      const cachedContent = editorContentByPathRef.current.get(selectedPath)
-      // Primary guard: handleEditorChange prevents empty content from being cached.
-      // Secondary guard: explicit length check as defense in depth.
-      if (cachedContent !== undefined && cachedContent.length > 0) {
-        setFileContent(cachedContent)
-        setEditorContent(cachedContent)
-        editorContentRef.current = cachedContent
-        editorPathRef.current = selectedPath
-        initialContentRef.current = initialContentByPathRef.current.get(selectedPath) ?? cachedContent
-        return
-      }
-    }
     const requestId = (fileLoadRequestIdRef.current += 1)
     const pathToLoad = selectedPath
     let cancelled = false
@@ -908,6 +897,22 @@ function App() {
         const stat = await window.ipc.invoke('workspace:stat', { path: pathToLoad })
         if (cancelled || fileLoadRequestIdRef.current !== requestId || selectedPathRef.current !== pathToLoad) return
         if (stat.kind === 'file') {
+          // Check cache with mtime validation (ensures we don't return stale content after external modifications)
+          if (pathToLoad.endsWith('.md')) {
+            const cachedContent = editorContentByPathRef.current.get(pathToLoad)
+            const cachedMtime = mtimeByPathRef.current.get(pathToLoad)
+            // Primary guard: handleEditorChange prevents empty content from being cached.
+            // Secondary guard: explicit length check as defense in depth.
+            // Mtime check: ensures cache is still valid (file not modified externally)
+            if (cachedContent !== undefined && cachedContent.length > 0 && cachedMtime === stat.mtimeMs) {
+              setFileContent(cachedContent)
+              setEditorContent(cachedContent)
+              editorContentRef.current = cachedContent
+              editorPathRef.current = pathToLoad
+              initialContentRef.current = initialContentByPathRef.current.get(pathToLoad) ?? cachedContent
+              return
+            }
+          }
           const result = await window.ipc.invoke('workspace:readFile', { path: pathToLoad })
           if (cancelled || fileLoadRequestIdRef.current !== requestId || selectedPathRef.current !== pathToLoad) return
           setFileContent(result.data)
@@ -920,6 +925,7 @@ function App() {
             setEditorContent(result.data)
             if (pathToLoad.endsWith('.md')) {
               setEditorCacheForPath(pathToLoad, result.data)
+              mtimeByPathRef.current.set(pathToLoad, result.stat.mtimeMs)
             }
             editorContentRef.current = result.data
             editorPathRef.current = pathToLoad

@@ -38,8 +38,34 @@ You can do things like:
 - Visualize, edit, and update your knowledge graph anytime (it’s just Markdown)
 - Record voice memos that automatically capture and update key takeaways in the graph
 
+---
+
+## Fork Dev Releases (aculich)
+
+> **This is a personal fork with bug fixes and improvements.**  
+> PRs submitted upstream - use at your own risk.
+
+| Version | Date | Platform | Download |
+|---------|------|----------|----------|
+| **v0.1.60-dev.15431b2f.20260317** | 2026-03-17 | macOS arm64 | [Download](https://github.com/aculich/rowboat/releases/download/v0.1.60-dev.15431b2f.20260317/Rowboat-darwin-arm64-0.1.60-dev.15431b2f.20260317.zip) |
+
+**All dev releases:** https://github.com/aculich/rowboat/releases
+
+### Fixes in this build:
+- **Granola incremental sync** - Early termination after unchanged docs ([PR #436](https://github.com/rowboatlabs/rowboat/pull/436))
+- **Google OAuth callback** - Preserve full URL for token exchange ([PR #431](https://github.com/rowboatlabs/rowboat/pull/431))
+- **Tiptap duplicate link** - Disable StarterKit Link extension ([PR #430](https://github.com/rowboatlabs/rowboat/pull/430))
+- **External file detection** - Validate mtime on tab switch ([PR #429](https://github.com/rowboatlabs/rowboat/pull/429))
+
+---
+
+## Official Upstream Releases
+
 Download latest for Mac/Windows/Linux: [Download](https://www.rowboatlabs.com/downloads)
 
+**All official release files:** https://github.com/rowboatlabs/rowboat/releases/latest
+
+---
 
 ## Demo
 
@@ -52,9 +78,18 @@ Download latest for Mac/Windows/Linux: [Download](https://www.rowboatlabs.com/do
 
 ## Installation
 
+### Option 1: Dev Release (this fork)
+**Latest dev build:** [v0.1.60-dev.15431b2f.20260317](https://github.com/aculich/rowboat/releases/tag/v0.1.60-dev.15431b2f.20260317) (macOS arm64, unsigned)
+
+1. Download the zip from [Releases](https://github.com/aculich/rowboat/releases)
+2. Extract `Rowboat.app`
+3. Move to Applications
+4. Right-click > Open (first time, to bypass Gatekeeper)
+
+### Option 2: Official Release (upstream)
 **Download latest for Mac/Windows/Linux:** [Download](https://www.rowboatlabs.com/downloads)
 
-**All release files:**   https://github.com/rowboatlabs/rowboat/releases/latest
+**All official release files:** https://github.com/rowboatlabs/rowboat/releases/latest
 
 ### Google setup
 To connect Google services (Gmail, Calendar, and Drive), follow [Google setup](https://github.com/rowboatlabs/rowboat/blob/main/google-setup.md).

@@ -39,7 +39,7 @@ export ROWBOAT_IS_DEV_BUILD="true"
 export ROWBOAT_FORK_NAME="$ROWBOAT_FORK_NAME"
 export ROWBOAT_UPSTREAM_RELEASE="$ROWBOAT_UPSTREAM_RELEASE"
 
-echo "Building Rowboat (dev) v${ROWBOAT_DEV_VERSION} @ ${GIT_COMMIT} (${GIT_BRANCH})..."
+echo "Building Rowboat (dev) ${ROWBOAT_DEV_VERSION} @ ${GIT_COMMIT} (${GIT_BRANCH})..."
 cd "$REPO_ROOT/apps/x"
 pnpm install
 npm run deps

@@ -33,6 +33,69 @@ function getOAuthErrorMessage(error: unknown): string {
   return msg;
 }
 
+/**
+ * Find the first Node-style errno code on an error or its causes (incl. AggregateError.errors).
+ */
+function findErrnoCode(error: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  const walk = (err: unknown): string | undefined => {
+    if (err == null || typeof err !== 'object') {
+      return undefined;
+    }
+    if (seen.has(err)) {
+      return undefined;
+    }
+    seen.add(err);
+    const code = (err as NodeJS.ErrnoException).code;
+    if (typeof code === 'string' && code.length > 0) {
+      return code;
+    }
+    if (typeof AggregateError !== 'undefined' && err instanceof AggregateError) {
+      for (const sub of err.errors) {
+        const c = walk(sub);
+        if (c) {
+          return c;
+        }
+      }
+    }
+    if (err instanceof Error && err.cause != null) {
+      return walk(err.cause);
+    }
+    return undefined;
+  };
+  return walk(error);
+}
+
+const NETWORK_ERRNO_CODES = new Set([
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+const NETWORK_HINT = ' Check your network, VPN, or firewall and try again.';
+
+/**
+ * User-facing message for OAuth connect failures (discovery, DCR register, etc.).
+ */
+function getOAuthConnectFailureMessage(error: unknown): string {
+  const errnoCode = findErrnoCode(error);
+  if (errnoCode && NETWORK_ERRNO_CODES.has(errnoCode)) {
+    return `Could not reach the authorization server (${errnoCode}).${NETWORK_HINT}`;
+  }
+  const fromHelper = getOAuthErrorMessage(error);
+  const topMsg = error instanceof Error ? error.message : fromHelper;
+  if (topMsg === 'fetch failed' || topMsg.includes('fetch failed')) {
+    if (errnoCode && errnoCode !== topMsg) {
+      return `${topMsg} (${errnoCode}).${NETWORK_HINT}`;
+    }
+    return `${topMsg}.${NETWORK_HINT}`;
+  }
+  return fromHelper;
+}
+
 // Store active OAuth flows (state -> { codeVerifier, provider, config })
 const activeFlows = new Map<string, {
   codeVerifier: string;
@@ -181,15 +244,12 @@ export async function connectProvider(provider: string, clientId?: string): Prom
       if (!clientId) {
         return { success: false, error: 'Google client ID is required to connect.' };
       }
+      // Persist before discovery so ETIMEDOUT and other failures do not drop the typed client ID
+      await oauthRepo.upsert(provider, { clientId });
     }
 
     // Get or create OAuth configuration
     const config = await getProviderConfiguration(provider, clientId);
-
-    // Persist Google client ID so it survives restarts and failed token exchanges
-    if (provider === 'google' && clientId) {
-      await oauthRepo.upsert(provider, { clientId });
-    }
 
     // Generate PKCE codes
     const { verifier: codeVerifier, challenge: codeChallenge } = await oauthClient.generatePKCE();
@@ -297,9 +357,11 @@ export async function connectProvider(provider: string, clientId?: string): Prom
     return { success: true };
   } catch (error) {
     console.error('OAuth connection failed:', error);
+    const errorMessage = getOAuthConnectFailureMessage(error);
+    emitOAuthEvent({ provider, success: false, error: errorMessage });
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: errorMessage,
     };
   }
 }

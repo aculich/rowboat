@@ -50,6 +50,8 @@ import { OnboardingModal } from '@/components/onboarding-modal'
 import { SearchDialog } from '@/components/search-dialog'
 import { BackgroundTaskDetail } from '@/components/background-task-detail'
 import { VersionHistoryPanel } from '@/components/version-history-panel'
+import { SyncActivityDockedPanel } from '@/components/sync-activity/sync-activity-docked-panel'
+import { SyncActivityUiProvider } from '@/components/sync-activity/sync-activity-ui-context'
 import { FileCardProvider } from '@/contexts/file-card-context'
 import { MarkdownPreOverride } from '@/components/ai-elements/markdown-code-override'
 import { TabBar, type ChatTab, type FileTab } from '@/components/tab-bar'
@@ -3104,6 +3106,7 @@ function App() {
   return (
     <TooltipProvider delayDuration={0}>
       <SidebarSectionProvider defaultSection="tasks">
+        <SyncActivityUiProvider>
         <div className="flex h-svh w-full overflow-hidden">
           {/* Content sidebar with SidebarProvider for collapse functionality */}
           <SidebarProvider
@@ -3557,6 +3560,8 @@ function App() {
               )}
             </SidebarInset>
 
+            <SyncActivityDockedPanel />
+
             {/* Chat sidebar - shown when viewing files/graph */}
             {isRightPaneContext && (
               <ChatSidebar
@@ -3609,6 +3614,7 @@ function App() {
             />
           </SidebarProvider>
         </div>
+        </SyncActivityUiProvider>
         <SearchDialog
           open={isSearchOpen}
           onOpenChange={setIsSearchOpen}

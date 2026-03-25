@@ -91,6 +91,7 @@ import { toast } from "@/lib/toast"
 import { SERVICE_LABELS } from "@/components/sync-activity/constants"
 import { SyncActivityLogView } from "@/components/sync-activity/sync-activity-log-view"
 import { useSyncActivityUi } from "@/components/sync-activity/sync-activity-ui-context"
+import { SyncActivityForceRefreshButton } from "@/components/sync-activity/sync-activity-force-refresh-button"
 import { SyncActivityVerbosityControl } from "@/components/sync-activity/sync-activity-verbosity-control"
 
 interface TreeNode {
@@ -310,6 +311,7 @@ function SyncStatusBar() {
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5">
                   <SyncActivityVerbosityControl />
+                  <SyncActivityForceRefreshButton tooltipSide="top" />
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button

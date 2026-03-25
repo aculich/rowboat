@@ -200,6 +200,12 @@ const ipcSchemas = {
     req: ServiceEvent,
     res: z.null(),
   },
+  'services:triggerSync': {
+    req: z.null(),
+    res: z.object({
+      success: z.literal(true),
+    }),
+  },
   'models:list': {
     req: z.null(),
     res: z.object({

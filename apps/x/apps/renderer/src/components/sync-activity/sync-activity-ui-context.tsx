@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ServiceEvent } from '@x/shared/src/service-events.js'
 import z from 'zod'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { toast } from '@/lib/toast'
 import {
   LS_SYNC_ACTIVITY_MODE,
   LS_SYNC_ACTIVITY_VERBOSITY,
@@ -59,6 +60,8 @@ type SyncActivityUiContextValue = {
   isLogPanelActive: boolean
   /** Footer: when docked, click returns to popover */
   onFooterActivate: () => void
+  /** Ask main process to wake all connector sync loops (Gmail, Calendar, Fireflies, Granola). */
+  triggerManualSync: () => Promise<void>
 }
 
 const SyncActivityUiContext = React.createContext<SyncActivityUiContextValue | null>(null)
@@ -219,6 +222,17 @@ export function SyncActivityUiProvider({ children }: { children: React.ReactNode
     setExpandedRowKey((prev) => (prev === key ? null : key))
   }, [])
 
+  const triggerManualSync = useCallback(async () => {
+    try {
+      await window.ipc.invoke('services:triggerSync', null)
+      toast('Sync requested', 'info')
+      await loadLogs()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to start sync'
+      toast(message, 'error')
+    }
+  }, [loadLogs])
+
   const value = useMemo<SyncActivityUiContextValue>(
     () => ({
       mode,
@@ -236,6 +250,7 @@ export function SyncActivityUiProvider({ children }: { children: React.ReactNode
       undockToPopover,
       isLogPanelActive,
       onFooterActivate,
+      triggerManualSync,
     }),
     [
       mode,
@@ -251,6 +266,7 @@ export function SyncActivityUiProvider({ children }: { children: React.ReactNode
       undockToPopover,
       isLogPanelActive,
       onFooterActivate,
+      triggerManualSync,
     ],
   )
 

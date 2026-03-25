@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { SERVICE_LABELS } from './constants'
 import { SyncActivityLogView } from './sync-activity-log-view'
 import { useSyncActivityUi } from './sync-activity-ui-context'
+import { SyncActivityForceRefreshButton } from './sync-activity-force-refresh-button'
 import { SyncActivityVerbosityControl } from './sync-activity-verbosity-control'
 
 export function SyncActivityDockedPanel({ className }: { className?: string }) {
@@ -45,6 +46,7 @@ export function SyncActivityDockedPanel({ className }: { className?: string }) {
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
           <SyncActivityVerbosityControl />
+          <SyncActivityForceRefreshButton />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

@@ -25,6 +25,9 @@ import type { IModelConfigRepo } from '@x/core/dist/models/repo.js';
 import type { IOAuthRepo } from '@x/core/dist/auth/repo.js';
 import { IGranolaConfigRepo } from '@x/core/dist/knowledge/granola/repo.js';
 import { triggerSync as triggerGranolaSync } from '@x/core/dist/knowledge/granola/sync.js';
+import { triggerSync as triggerGmailSync } from '@x/core/dist/knowledge/sync_gmail.js';
+import { triggerSync as triggerCalendarSync } from '@x/core/dist/knowledge/sync_calendar.js';
+import { triggerSync as triggerFirefliesSync } from '@x/core/dist/knowledge/sync_fireflies.js';
 import { isOnboardingComplete, markOnboardingComplete } from '@x/core/dist/config/note_creation_config.js';
 import * as composioHandler from './composio-handler.js';
 import { IAgentScheduleRepo } from '@x/core/dist/agent-schedule/repo.js';
@@ -394,6 +397,13 @@ export function setupIpcHandlers() {
     },
     'runs:delete': async (_event, args) => {
       await runsCore.deleteRun(args.runId);
+      return { success: true };
+    },
+    'services:triggerSync': async () => {
+      triggerGmailSync();
+      triggerCalendarSync();
+      triggerFirefliesSync();
+      triggerGranolaSync();
       return { success: true };
     },
     'models:list': async () => {

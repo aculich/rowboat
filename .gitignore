@@ -3,3 +3,6 @@
 .vscode/
 data/
 .venv/
+
+# Draft PR/issue copy and mockups: separate subrepo at .devdocs/ — not part of this repo history
+.devdocs/

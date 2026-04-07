@@ -14,6 +14,7 @@ import * as runsCore from '@x/core/dist/runs/runs.js';
 import { bus } from '@x/core/dist/runs/bus.js';
 import { serviceBus } from '@x/core/dist/services/service_bus.js';
 import type { FSWatcher } from 'chokidar';
+import type { Dirent } from 'node:fs';
 import fs from 'node:fs/promises';
 import z from 'zod';
 import { RunEvent } from '@x/shared/dist/runs.js';
@@ -140,6 +141,93 @@ function toNumberRecord(value: unknown): Record<string, number> {
 
 const MEMORY_LOG_DIR = path.join(os.homedir(), '.rowboat', 'logs');
 const MEMORY_LOG_PATH = path.join(MEMORY_LOG_DIR, 'memory-debug.jsonl');
+const MEMORY_LOG_MAX_BYTES = Number.parseInt(process.env.ROWBOAT_MEMORY_LOG_MAX_BYTES ?? '', 10) || 10 * 1024 * 1024;
+const MEMORY_LOG_MAX_ROLLED_FILES = Number.parseInt(process.env.ROWBOAT_MEMORY_LOG_MAX_ROLLED_FILES ?? '', 10) || 5;
+const MEMORY_LOG_RETENTION_DAYS = Number.parseInt(process.env.ROWBOAT_MEMORY_LOG_RETENTION_DAYS ?? '', 10) || 7;
+const MEMORY_LOG_RETENTION_MS = MEMORY_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+const MEMORY_LOG_MAINTENANCE_INTERVAL_MS = 60 * 1000;
+
+let lastMemoryLogMaintenanceAt = 0;
+
+function memoryLogPathAtIndex(index: number): string {
+  if (index <= 0) return MEMORY_LOG_PATH;
+  return `${MEMORY_LOG_PATH}.${index}`;
+}
+
+async function readFileSizeSafe(filePath: string): Promise<number> {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.size;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT') return 0;
+    throw error;
+  }
+}
+
+async function removeFileSafe(filePath: string): Promise<void> {
+  try {
+    await fs.unlink(filePath);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== 'ENOENT') throw error;
+  }
+}
+
+async function renameFileSafe(fromPath: string, toPath: string): Promise<void> {
+  try {
+    await fs.rename(fromPath, toPath);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== 'ENOENT') throw error;
+  }
+}
+
+async function rotateMemoryLogIfNeeded(nextLineBytes: number): Promise<void> {
+  const currentSize = await readFileSizeSafe(MEMORY_LOG_PATH);
+  if (currentSize + nextLineBytes <= MEMORY_LOG_MAX_BYTES) return;
+
+  // Drop the oldest rolled file before shifting.
+  await removeFileSafe(memoryLogPathAtIndex(MEMORY_LOG_MAX_ROLLED_FILES));
+
+  // Shift .N => .N+1 (descending to avoid clobbering).
+  for (let index = MEMORY_LOG_MAX_ROLLED_FILES - 1; index >= 1; index--) {
+    await renameFileSafe(memoryLogPathAtIndex(index), memoryLogPathAtIndex(index + 1));
+  }
+
+  // Move the active log to .1.
+  await renameFileSafe(MEMORY_LOG_PATH, memoryLogPathAtIndex(1));
+}
+
+async function runMemoryLogMaintenanceIfNeeded(nowMs: number): Promise<void> {
+  if (nowMs - lastMemoryLogMaintenanceAt < MEMORY_LOG_MAINTENANCE_INTERVAL_MS) return;
+  lastMemoryLogMaintenanceAt = nowMs;
+
+  let entries: Dirent[] = [];
+  try {
+    entries = await fs.readdir(MEMORY_LOG_DIR, { withFileTypes: true, encoding: 'utf8' });
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT') return;
+    throw error;
+  }
+
+  const basename = path.basename(MEMORY_LOG_PATH);
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (!entry.name.startsWith(basename)) continue;
+
+    const filePath = path.join(MEMORY_LOG_DIR, entry.name);
+    try {
+      const stat = await fs.stat(filePath);
+      if (nowMs - stat.mtimeMs > MEMORY_LOG_RETENTION_MS) {
+        await fs.unlink(filePath);
+      }
+    } catch {
+      // Best effort cleanup.
+    }
+  }
+}
 
 async function getMemoryStats(): Promise<{
   timestamp: number;
@@ -279,8 +367,14 @@ async function appendMemorySample(args: {
     mainMemory: args.mainMemory,
     diagnostics,
   });
+
+  const lineWithNewline = `${line}\n`;
+  const lineBytes = Buffer.byteLength(lineWithNewline, 'utf8');
+
   await fs.mkdir(MEMORY_LOG_DIR, { recursive: true });
-  await fs.appendFile(MEMORY_LOG_PATH, `${line}\n`, 'utf8');
+  await runMemoryLogMaintenanceIfNeeded(Date.now());
+  await rotateMemoryLogIfNeeded(lineBytes);
+  await fs.appendFile(MEMORY_LOG_PATH, lineWithNewline, 'utf8');
   return { success: true, path: MEMORY_LOG_PATH };
 }
 

@@ -36,6 +36,12 @@ declare global {
     electronUtils: {
       getPathForFile: (file: File) => string;
     };
+    __rowboatMemoryDebug?: {
+      start: () => void;
+      stop: () => void;
+      sample: () => Promise<void>;
+      isEnabled: () => boolean;
+    };
   }
 }
 

@@ -74,6 +74,11 @@ import {
 import { AgentScheduleConfig } from '@x/shared/dist/agent-schedule.js'
 import { AgentScheduleState } from '@x/shared/dist/agent-schedule-state.js'
 import { toast } from "sonner"
+import {
+  installMemoryDebugProbe,
+  memoryDebugEnabledFromEnv,
+  memoryDebugIntervalFromEnv,
+} from '@/lib/memory-debug'
 
 type DirEntry = z.infer<typeof workspace.DirEntry>
 type RunEventType = z.infer<typeof RunEvent>
@@ -107,6 +112,8 @@ const TITLEBAR_TOGGLE_MARGIN_LEFT_PX = 12
 const TITLEBAR_BUTTONS_COLLAPSED = 5
 const TITLEBAR_BUTTON_GAPS_COLLAPSED = 4
 const GRAPH_TAB_PATH = '__rowboat_graph_view__'
+const MAX_RUNS_IN_MEMORY = 300
+const MAX_VIEW_HISTORY = 100
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
@@ -627,6 +634,7 @@ function App() {
   const [allPermissionRequests, setAllPermissionRequests] = useState<Map<string, z.infer<typeof ToolPermissionRequestEvent>>>(new Map())
   // Track permission responses (toolCallId -> response)
   const [permissionResponses, setPermissionResponses] = useState<Map<string, 'approve' | 'deny'>>(new Map())
+  const memoryCountersRef = useRef<Record<string, number>>({})
 
   useEffect(() => {
     chatViewStateByTabRef.current = chatViewStateByTab
@@ -673,6 +681,42 @@ function App() {
       return changed ? next : prev
     })
   }, [chatTabs])
+
+  useEffect(() => {
+    memoryCountersRef.current = {
+      runsCount: runs.length,
+      conversationItems: conversation.length,
+      activeChatTabs: chatTabs.length,
+      cachedChatViewStates: Object.keys(chatViewStateByTab).length,
+      historyBackDepth: historyRef.current.back.length,
+      historyForwardDepth: historyRef.current.forward.length,
+      editorCachePaths: editorContentByPathRef.current.size,
+      initialContentCachePaths: initialContentByPathRef.current.size,
+      mtimeCachePaths: mtimeByPathRef.current.size,
+      streamingBufferRuns: streamingBuffersRef.current.size,
+      processingRunIds: processingRunIds.size,
+      pendingAskHumanRequests: pendingAskHumanRequests.size,
+      allPermissionRequests: allPermissionRequests.size,
+      permissionResponses: permissionResponses.size,
+    }
+  }, [
+    runs.length,
+    conversation.length,
+    chatTabs.length,
+    chatViewStateByTab,
+    processingRunIds,
+    pendingAskHumanRequests,
+    allPermissionRequests,
+    permissionResponses,
+  ])
+
+  useEffect(() => {
+    return installMemoryDebugProbe({
+      autoStart: memoryDebugEnabledFromEnv(),
+      intervalMs: memoryDebugIntervalFromEnv(),
+      getCounters: () => ({ ...memoryCountersRef.current }),
+    })
+  }, [])
 
   // Workspace root for full paths
   const [workspaceRoot, setWorkspaceRoot] = useState<string>('')
@@ -1100,22 +1144,24 @@ function App() {
     }
   }, [selectedPath, versionHistoryPath])
 
-  // Load runs list (all pages)
+  // Load recent runs list with a hard cap to avoid unbounded growth.
   const loadRuns = useCallback(async () => {
     try {
-      const allRuns: RunListItem[] = []
+      const copilotRuns: RunListItem[] = []
       let cursor: string | undefined = undefined
 
-      // Fetch all pages
+      // Fetch pages until we reach the in-memory cap.
       do {
         const result: ListRunsResponseType = await window.ipc.invoke('runs:list', { cursor })
-        allRuns.push(...result.runs)
+        for (const run of result.runs) {
+          if (run.agentId !== 'copilot') continue
+          copilotRuns.push(run)
+          if (copilotRuns.length >= MAX_RUNS_IN_MEMORY) break
+        }
         cursor = result.nextCursor
-      } while (cursor)
+      } while (cursor && copilotRuns.length < MAX_RUNS_IN_MEMORY)
 
-      // Filter for copilot runs only
-      const copilotRuns = allRuns.filter((run: RunListItem) => run.agentId === 'copilot')
-      setRuns(copilotRuns)
+      setRuns(copilotRuns.slice(0, MAX_RUNS_IN_MEMORY))
     } catch (err) {
       console.error('Failed to load runs:', err)
     }
@@ -2254,7 +2300,9 @@ function App() {
   const appendUnique = useCallback((stack: ViewState[], entry: ViewState) => {
     const last = stack[stack.length - 1]
     if (last && viewStatesEqual(last, entry)) return stack
-    return [...stack, entry]
+    const next = [...stack, entry]
+    if (next.length <= MAX_VIEW_HISTORY) return next
+    return next.slice(next.length - MAX_VIEW_HISTORY)
   }, [])
 
   const ensureFileTabForPath = useCallback((path: string) => {

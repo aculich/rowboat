@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, shell, app } from 'electron';
+import { ipcMain, BrowserWindow, shell, app, webContents } from 'electron';
 import { ipc } from '@x/shared';
 import path from 'node:path';
 import os from 'node:os';
@@ -125,6 +125,163 @@ function getBuildInfo(): {
     forkName: process.env.ROWBOAT_FORK_NAME ?? 'rowboatlabs',
     upstreamRelease: process.env.ROWBOAT_UPSTREAM_RELEASE ?? '',
   };
+}
+
+function toNumberRecord(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === 'number' && Number.isFinite(item)) {
+      out[key] = item;
+    }
+  }
+  return out;
+}
+
+const MEMORY_LOG_DIR = path.join(os.homedir(), '.rowboat', 'logs');
+const MEMORY_LOG_PATH = path.join(MEMORY_LOG_DIR, 'memory-debug.jsonl');
+
+async function getMemoryStats(): Promise<{
+  timestamp: number;
+  processMemory: Record<string, number>;
+  systemMemory: Record<string, number>;
+  appMetrics: Array<{
+    pid: number;
+    type: string;
+    cpuPercent: number | null;
+    idleWakeupsPerSecond: number | null;
+    memory: Record<string, number | null>;
+  }>;
+}> {
+  const processMemoryRaw = await process.getProcessMemoryInfo();
+  const systemMemoryRaw = process.getSystemMemoryInfo();
+  const metrics = app.getAppMetrics();
+
+  const appMetrics = metrics.map((metric) => {
+    const metricRecord = metric as unknown as Record<string, unknown>;
+    const memory = metricRecord.memory as Record<string, unknown> | undefined;
+    const memoryRecord: Record<string, number | null> = {};
+    if (memory && typeof memory === 'object') {
+      for (const [key, value] of Object.entries(memory)) {
+        memoryRecord[key] = typeof value === 'number' && Number.isFinite(value) ? value : null;
+      }
+    }
+
+    const pid = typeof metricRecord.pid === 'number' ? metricRecord.pid : -1;
+    const type = typeof metricRecord.type === 'string' ? metricRecord.type : 'unknown';
+    const cpu = metricRecord.cpu as Record<string, unknown> | undefined;
+
+    return {
+      pid,
+      type,
+      cpuPercent: typeof cpu?.percentCPUUsage === 'number' ? cpu.percentCPUUsage : null,
+      idleWakeupsPerSecond: typeof cpu?.idleWakeupsPerSecond === 'number' ? cpu.idleWakeupsPerSecond : null,
+      memory: memoryRecord,
+    };
+  });
+
+  return {
+    timestamp: Date.now(),
+    processMemory: toNumberRecord(processMemoryRaw),
+    systemMemory: toNumberRecord(systemMemoryRaw),
+    appMetrics,
+  };
+}
+
+function getProcessDiagnostics(): {
+  windows: Array<{
+    id: number;
+    title: string;
+    url: string;
+    isVisible: boolean;
+    isFocused: boolean;
+    isDestroyed: boolean;
+    webContentsId: number;
+  }>;
+  webContents: Array<{
+    id: number;
+    pid: number;
+    type: string;
+    url: string;
+    title: string;
+    isDestroyed: boolean;
+    isFocused: boolean;
+    isDevToolsOpened: boolean;
+    ownerWindowId: number | null;
+    devToolsWebContentsId: number | null;
+    hostWebContentsId: number | null;
+  }>;
+} {
+  const windows = BrowserWindow.getAllWindows().map((win) => ({
+    id: win.id,
+    title: win.getTitle(),
+    url: win.webContents?.getURL?.() ?? '',
+    isVisible: win.isVisible(),
+    isFocused: win.isFocused(),
+    isDestroyed: win.isDestroyed(),
+    webContentsId: win.webContents?.id ?? -1,
+  }));
+
+  const contents = webContents.getAllWebContents().map((wc) => {
+    const ownerWindow = BrowserWindow.fromWebContents(wc);
+    const metricsRecord = wc as unknown as Record<string, unknown>;
+    const devToolsWebContents = metricsRecord.devToolsWebContents as Electron.WebContents | undefined;
+    const hostWebContents = metricsRecord.hostWebContents as Electron.WebContents | undefined;
+
+    return {
+      id: wc.id,
+      pid: wc.getProcessId?.() ?? -1,
+      type: wc.getType(),
+      url: wc.getURL(),
+      title: wc.getTitle(),
+      isDestroyed: wc.isDestroyed(),
+      isFocused: wc.isFocused(),
+      isDevToolsOpened: wc.isDevToolsOpened(),
+      ownerWindowId: ownerWindow?.id ?? null,
+      devToolsWebContentsId: devToolsWebContents?.id ?? null,
+      hostWebContentsId: hostWebContents?.id ?? null,
+    };
+  });
+
+  return {
+    windows,
+    webContents: contents,
+  };
+}
+
+async function appendMemorySample(args: {
+  at: string;
+  rendererHeap: {
+    usedJSHeapSize: number;
+    totalJSHeapSize: number;
+    jsHeapSizeLimit: number;
+  } | null;
+  counters: Record<string, number>;
+  mainMemory: {
+    timestamp: number;
+    processMemory: Record<string, number>;
+    systemMemory: Record<string, number>;
+    appMetrics: Array<{
+      pid: number;
+      type: string;
+      cpuPercent: number | null;
+      idleWakeupsPerSecond: number | null;
+      memory: Record<string, number | null>;
+    }>;
+  };
+}): Promise<{ success: true; path: string }> {
+  const diagnostics = getProcessDiagnostics();
+  const line = JSON.stringify({
+    at: args.at,
+    recordedAt: new Date().toISOString(),
+    rendererHeap: args.rendererHeap,
+    counters: args.counters,
+    mainMemory: args.mainMemory,
+    diagnostics,
+  });
+  await fs.mkdir(MEMORY_LOG_DIR, { recursive: true });
+  await fs.appendFile(MEMORY_LOG_PATH, `${line}\n`, 'utf8');
+  return { success: true, path: MEMORY_LOG_PATH };
 }
 
 // ============================================================================
@@ -334,6 +491,15 @@ export function setupIpcHandlers() {
     },
     'app:getBuildInfo': async () => {
       return getBuildInfo();
+    },
+    'app:getMemoryStats': async () => {
+      return getMemoryStats();
+    },
+    'app:appendMemorySample': async (_event, args) => {
+      return appendMemorySample(args);
+    },
+    'app:getProcessDiagnostics': async () => {
+      return getProcessDiagnostics();
     },
     'workspace:getRoot': async () => {
       return workspace.getRoot();

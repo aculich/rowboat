@@ -12,6 +12,21 @@ import { UserMessageContent } from './message.js';
 // Runtime Validation Schemas (Single Source of Truth)
 // ============================================================================
 
+const AppMemoryStats = z.object({
+  timestamp: z.number(),
+  processMemory: z.record(z.string(), z.number()),
+  systemMemory: z.record(z.string(), z.number()),
+  appMetrics: z.array(
+    z.object({
+      pid: z.number(),
+      type: z.string(),
+      cpuPercent: z.number().nullable(),
+      idleWakeupsPerSecond: z.number().nullable(),
+      memory: z.record(z.string(), z.number().nullable()),
+    }),
+  ),
+});
+
 const ipcSchemas = {
   'app:getVersions': {
     req: z.null(),
@@ -31,6 +46,57 @@ const ipcSchemas = {
       isDevBuild: z.boolean(),
       forkName: z.string(),
       upstreamRelease: z.string().optional(),
+    }),
+  },
+  'app:getMemoryStats': {
+    req: z.null(),
+    res: AppMemoryStats,
+  },
+  'app:appendMemorySample': {
+    req: z.object({
+      at: z.string(),
+      rendererHeap: z.object({
+        usedJSHeapSize: z.number(),
+        totalJSHeapSize: z.number(),
+        jsHeapSizeLimit: z.number(),
+      }).nullable(),
+      counters: z.record(z.string(), z.number()),
+      mainMemory: AppMemoryStats,
+    }),
+    res: z.object({
+      success: z.literal(true),
+      path: z.string(),
+    }),
+  },
+  'app:getProcessDiagnostics': {
+    req: z.null(),
+    res: z.object({
+      windows: z.array(
+        z.object({
+          id: z.number(),
+          title: z.string(),
+          url: z.string(),
+          isVisible: z.boolean(),
+          isFocused: z.boolean(),
+          isDestroyed: z.boolean(),
+          webContentsId: z.number(),
+        }),
+      ),
+      webContents: z.array(
+        z.object({
+          id: z.number(),
+          pid: z.number(),
+          type: z.string(),
+          url: z.string(),
+          title: z.string(),
+          isDestroyed: z.boolean(),
+          isFocused: z.boolean(),
+          isDevToolsOpened: z.boolean(),
+          ownerWindowId: z.number().nullable(),
+          devToolsWebContentsId: z.number().nullable(),
+          hostWebContentsId: z.number().nullable(),
+        }),
+      ),
     }),
   },
   'workspace:getRoot': {

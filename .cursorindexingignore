@@ -1,0 +1,4 @@
+# .devdocs/ is listed in .gitignore (drafts tracked in a separate subrepo) but should stay in
+# Cursor codebase indexing. Negation re-includes these paths for indexing.
+!.devdocs/
+!.devdocs/**

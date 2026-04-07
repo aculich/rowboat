@@ -143,7 +143,11 @@ export async function initiateConnection(toolkitSlug: string): Promise<{
 
         // Set up callback server
         let cleanupTimeout: NodeJS.Timeout;
-        const { server } = await createAuthServer(8081, async () => {
+        let callbackHandled = false;
+        const { server } = await createAuthServer(8081, async (_callbackUrl) => {
+            // Guard against duplicate callbacks (browser may send multiple requests)
+            if (callbackHandled) return;
+            callbackHandled = true;
             // OAuth callback received - sync the account status
             try {
                 const accountStatus = await composioClient.getConnectedAccount(connectedAccountId);

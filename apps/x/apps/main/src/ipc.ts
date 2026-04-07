@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, shell } from 'electron';
+import { ipcMain, BrowserWindow, shell, app } from 'electron';
 import { ipc } from '@x/shared';
 import path from 'node:path';
 import os from 'node:os';
@@ -95,6 +95,32 @@ function getVersions(): {
     chrome: process.versions.chrome,
     node: process.versions.node,
     electron: process.versions.electron,
+  };
+}
+
+/**
+ * Get build info for version visibility (dev: commit, branch, date, upstream release; release: version only)
+ */
+function getBuildInfo(): {
+  version: string;
+  gitCommit: string;
+  gitBranch: string;
+  buildDate: string;
+  isDevBuild: boolean;
+  forkName: string;
+  upstreamRelease: string;
+} {
+  const isDev = process.env.ROWBOAT_IS_DEV_BUILD === 'true';
+  return {
+    version: isDev
+      ? (process.env.ROWBOAT_DEV_VERSION ?? app.getVersion())
+      : app.getVersion(),
+    gitCommit: process.env.ROWBOAT_GIT_COMMIT ?? '',
+    gitBranch: process.env.ROWBOAT_GIT_BRANCH ?? '',
+    buildDate: process.env.ROWBOAT_BUILD_DATE ?? '',
+    isDevBuild: isDev,
+    forkName: process.env.ROWBOAT_FORK_NAME ?? 'rowboatlabs',
+    upstreamRelease: process.env.ROWBOAT_UPSTREAM_RELEASE ?? '',
   };
 }
 
@@ -301,8 +327,10 @@ export function setupIpcHandlers() {
 
   registerIpcHandlers({
     'app:getVersions': async () => {
-      // args is null for this channel (no request payload)
       return getVersions();
+    },
+    'app:getBuildInfo': async () => {
+      return getBuildInfo();
     },
     'workspace:getRoot': async () => {
       return workspace.getRoot();

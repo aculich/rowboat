@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useState, useEffect, useCallback } from "react"
-import { Server, Key, Shield, Palette, Monitor, Sun, Moon, Loader2, CheckCircle2 } from "lucide-react"
+import { Server, Key, Shield, Palette, Monitor, Sun, Moon, Loader2, CheckCircle2, Info } from "lucide-react"
 
 import {
   Dialog,
@@ -21,8 +21,9 @@ import {
 import { cn } from "@/lib/utils"
 import { useTheme } from "@/contexts/theme-context"
 import { toast } from "sonner"
+import { useBuildInfo } from "@/hooks/useBuildInfo"
 
-type ConfigTab = "models" | "mcp" | "security" | "appearance"
+type ConfigTab = "models" | "mcp" | "security" | "appearance" | "about"
 
 interface TabConfig {
   id: ConfigTab
@@ -60,6 +61,12 @@ const tabs: TabConfig[] = [
     icon: Palette,
     description: "Customize the look and feel",
   },
+  {
+    id: "about",
+    label: "About",
+    icon: Info,
+    description: "Version and build information",
+  },
 ]
 
 interface SettingsDialogProps {
@@ -94,6 +101,77 @@ function ThemeOption({
         {label}
       </span>
     </button>
+  )
+}
+
+function AboutSettings() {
+  const buildInfo = useBuildInfo()
+  if (!buildInfo) {
+    return (
+      <div className="text-sm text-muted-foreground">Loading version information…</div>
+    )
+  }
+  const versionLabel = buildInfo.version.startsWith("v")
+    ? buildInfo.version
+    : `v${buildInfo.version}`
+  const commitUrl =
+    buildInfo.gitCommit && buildInfo.forkName
+      ? `https://github.com/${buildInfo.forkName}/rowboat/commit/${buildInfo.gitCommit}`
+      : null
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
+        <p className="text-sm font-medium">Version</p>
+        <p className="text-sm text-muted-foreground">
+          {versionLabel}
+          {buildInfo.isDevBuild && " (dev build)"}
+        </p>
+      </div>
+      {buildInfo.isDevBuild && (buildInfo.gitCommit || buildInfo.gitBranch || buildInfo.buildDate) && (
+        <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
+          <p className="text-sm font-medium">Build information</p>
+          <dl className="text-sm text-muted-foreground space-y-1">
+            {buildInfo.gitCommit && (
+              <div>
+                <dt className="inline font-medium text-foreground">Commit: </dt>
+                <dd className="inline">
+                  {commitUrl ? (
+                    <a
+                      href={commitUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      {buildInfo.gitCommit.slice(0, 7)}
+                    </a>
+                  ) : (
+                    buildInfo.gitCommit.slice(0, 7)
+                  )}
+                </dd>
+              </div>
+            )}
+            {buildInfo.gitBranch && (
+              <div>
+                <dt className="inline font-medium text-foreground">Branch: </dt>
+                <dd className="inline">{buildInfo.gitBranch}</dd>
+              </div>
+            )}
+            {buildInfo.buildDate && (
+              <div>
+                <dt className="inline font-medium text-foreground">Built: </dt>
+                <dd className="inline">{buildInfo.buildDate}</dd>
+              </div>
+            )}
+            {buildInfo.upstreamRelease && (
+              <div>
+                <dt className="inline font-medium text-foreground">Based on upstream: </dt>
+                <dd className="inline">{buildInfo.upstreamRelease}</dd>
+              </div>
+            )}
+          </dl>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -520,7 +598,7 @@ export function SettingsDialog({ children }: SettingsDialogProps) {
   }
 
   const loadConfig = useCallback(async (tab: ConfigTab) => {
-    if (tab === "appearance" || tab === "models") return
+    if (tab === "appearance" || tab === "models" || tab === "about") return
     const tabConfig = tabs.find((t) => t.id === tab)!
     if (!tabConfig.path) return
     setLoading(true)
@@ -626,11 +704,13 @@ export function SettingsDialog({ children }: SettingsDialogProps) {
             </div>
 
             {/* Content */}
-            <div className={cn("flex-1 p-4 min-h-0", activeTab === "models" ? "overflow-y-auto" : "overflow-hidden")}>
+            <div className={cn("flex-1 p-4 min-h-0", activeTab === "models" || activeTab === "about" ? "overflow-y-auto" : "overflow-hidden")}>
               {activeTab === "models" ? (
                 <ModelSettings dialogOpen={open} />
               ) : activeTab === "appearance" ? (
                 <AppearanceSettings />
+              ) : activeTab === "about" ? (
+                <AboutSettings />
               ) : loading ? (
                 <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
                   Loading...

@@ -10,7 +10,7 @@
     "core": "cd packages/core && npm run build",
     "preload": "cd apps/preload && npm run build",
     "deps": "npm run shared && npm run core && npm run preload",
-    "main": "wait-on http://localhost:5173 && cd apps/main && npm run build && npm run start",
+    "main": "wait-on http://localhost:5173 && cd apps/main && npm run build && (test -n \"$ROWBOAT_DEV_INSPECT\" && npm run start:inspect || npm run start)",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },

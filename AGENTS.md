@@ -51,7 +51,7 @@ To build a smaller set on develop, merge only the branches you need (e.g. `main 
 
 - **main = mirror:** Never commit on main. Sync only. Sync script resets main to `upstream/main` if it is ahead.
 - **One concern per branch:** Each feature/* or fix/* branch holds a single feature or fix. Keeps PRs and rebases clean.
-- **Dev workflow on its own branch:** Keep `dev.sh` and fork-only docs on `feature/devscripts` so you can rebase it on main and merge into develop without mixing app code. Lets you selectively apply “how we run” vs “what we changed.”
+- **Dev workflow on its own branch:** Keep `dev.sh` and fork-only docs on `feature/devscripts` so you can rebase it on main and merge into develop without mixing app code. Lets you selectively apply "how we run" vs "what we changed."
 - **develop = selective integration:** Rebuild develop by resetting to main, then merging in order: `feature/devscripts` first, then the feature/fix branches you want. Push develop and topic branches to origin so GitHub matches local.
 - **Rebase topic branches onto main:** After syncing main, rebase each topic branch onto main so they stay up to date. Use `--force-with-lease` when pushing after a rebase.
 

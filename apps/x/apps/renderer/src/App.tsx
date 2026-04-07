@@ -50,6 +50,8 @@ import { OnboardingModal } from '@/components/onboarding-modal'
 import { SearchDialog } from '@/components/search-dialog'
 import { BackgroundTaskDetail } from '@/components/background-task-detail'
 import { VersionHistoryPanel } from '@/components/version-history-panel'
+import { SyncActivityDockedPanel } from '@/components/sync-activity/sync-activity-docked-panel'
+import { SyncActivityUiProvider } from '@/components/sync-activity/sync-activity-ui-context'
 import { FileCardProvider } from '@/contexts/file-card-context'
 import { MarkdownPreOverride } from '@/components/ai-elements/markdown-code-override'
 import { TabBar, type ChatTab, type FileTab } from '@/components/tab-bar'
@@ -72,6 +74,11 @@ import {
 import { AgentScheduleConfig } from '@x/shared/dist/agent-schedule.js'
 import { AgentScheduleState } from '@x/shared/dist/agent-schedule-state.js'
 import { toast } from "sonner"
+import {
+  installMemoryDebugProbe,
+  memoryDebugEnabledFromEnv,
+  memoryDebugIntervalFromEnv,
+} from '@/lib/memory-debug'
 
 type DirEntry = z.infer<typeof workspace.DirEntry>
 type RunEventType = z.infer<typeof RunEvent>
@@ -105,6 +112,8 @@ const TITLEBAR_TOGGLE_MARGIN_LEFT_PX = 12
 const TITLEBAR_BUTTONS_COLLAPSED = 5
 const TITLEBAR_BUTTON_GAPS_COLLAPSED = 4
 const GRAPH_TAB_PATH = '__rowboat_graph_view__'
+const MAX_RUNS_IN_MEMORY = 300
+const MAX_VIEW_HISTORY = 100
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
@@ -491,6 +500,7 @@ function App() {
   const editorPathRef = useRef<string | null>(null)
   const fileLoadRequestIdRef = useRef(0)
   const initialContentByPathRef = useRef<Map<string, string>>(new Map())
+  const mtimeByPathRef = useRef<Map<string, number>>(new Map())
 
   // Global navigation history (back/forward) across views (chat/file/graph/task)
   const historyRef = useRef<{ back: ViewState[]; forward: ViewState[] }>({ back: [], forward: [] })
@@ -624,6 +634,7 @@ function App() {
   const [allPermissionRequests, setAllPermissionRequests] = useState<Map<string, z.infer<typeof ToolPermissionRequestEvent>>>(new Map())
   // Track permission responses (toolCallId -> response)
   const [permissionResponses, setPermissionResponses] = useState<Map<string, 'approve' | 'deny'>>(new Map())
+  const memoryCountersRef = useRef<Record<string, number>>({})
 
   useEffect(() => {
     chatViewStateByTabRef.current = chatViewStateByTab
@@ -670,6 +681,42 @@ function App() {
       return changed ? next : prev
     })
   }, [chatTabs])
+
+  useEffect(() => {
+    memoryCountersRef.current = {
+      runsCount: runs.length,
+      conversationItems: conversation.length,
+      activeChatTabs: chatTabs.length,
+      cachedChatViewStates: Object.keys(chatViewStateByTab).length,
+      historyBackDepth: historyRef.current.back.length,
+      historyForwardDepth: historyRef.current.forward.length,
+      editorCachePaths: editorContentByPathRef.current.size,
+      initialContentCachePaths: initialContentByPathRef.current.size,
+      mtimeCachePaths: mtimeByPathRef.current.size,
+      streamingBufferRuns: streamingBuffersRef.current.size,
+      processingRunIds: processingRunIds.size,
+      pendingAskHumanRequests: pendingAskHumanRequests.size,
+      allPermissionRequests: allPermissionRequests.size,
+      permissionResponses: permissionResponses.size,
+    }
+  }, [
+    runs.length,
+    conversation.length,
+    chatTabs.length,
+    chatViewStateByTab,
+    processingRunIds,
+    pendingAskHumanRequests,
+    allPermissionRequests,
+    permissionResponses,
+  ])
+
+  useEffect(() => {
+    return installMemoryDebugProbe({
+      autoStart: memoryDebugEnabledFromEnv(),
+      intervalMs: memoryDebugIntervalFromEnv(),
+      getCounters: () => ({ ...memoryCountersRef.current }),
+    })
+  }, [])
 
   // Workspace root for full paths
   const [workspaceRoot, setWorkspaceRoot] = useState<string>('')
@@ -738,6 +785,7 @@ function App() {
 
   const removeEditorCacheForPath = useCallback((path: string) => {
     editorContentByPathRef.current.delete(path)
+    mtimeByPathRef.current.delete(path)
     setEditorContentByPath((prev) => {
       if (!(path in prev)) return prev
       const next = { ...prev }
@@ -747,6 +795,8 @@ function App() {
   }, [])
 
   const handleEditorChange = useCallback((path: string, markdown: string) => {
+    // Don't cache empty content (prevents editor initialization from polluting cache)
+    if (!markdown) return
     setEditorCacheForPath(path, markdown)
     const nextSelectedPath = selectedPathRef.current
     if (nextSelectedPath !== path) {
@@ -885,17 +935,6 @@ function App() {
       setLastSaved(null)
       return
     }
-    if (selectedPath.endsWith('.md')) {
-      const cachedContent = editorContentByPathRef.current.get(selectedPath)
-      if (cachedContent !== undefined) {
-        setFileContent(cachedContent)
-        setEditorContent(cachedContent)
-        editorContentRef.current = cachedContent
-        editorPathRef.current = selectedPath
-        initialContentRef.current = initialContentByPathRef.current.get(selectedPath) ?? cachedContent
-        return
-      }
-    }
     const requestId = (fileLoadRequestIdRef.current += 1)
     const pathToLoad = selectedPath
     let cancelled = false
@@ -904,6 +943,22 @@ function App() {
         const stat = await window.ipc.invoke('workspace:stat', { path: pathToLoad })
         if (cancelled || fileLoadRequestIdRef.current !== requestId || selectedPathRef.current !== pathToLoad) return
         if (stat.kind === 'file') {
+          // Check cache with mtime validation (ensures we don't return stale content after external modifications)
+          if (pathToLoad.endsWith('.md')) {
+            const cachedContent = editorContentByPathRef.current.get(pathToLoad)
+            const cachedMtime = mtimeByPathRef.current.get(pathToLoad)
+            // Primary guard: handleEditorChange prevents empty content from being cached.
+            // Secondary guard: explicit length check as defense in depth.
+            // Mtime check: ensures cache is still valid (file not modified externally)
+            if (cachedContent !== undefined && cachedContent.length > 0 && cachedMtime === stat.mtimeMs) {
+              setFileContent(cachedContent)
+              setEditorContent(cachedContent)
+              editorContentRef.current = cachedContent
+              editorPathRef.current = pathToLoad
+              initialContentRef.current = initialContentByPathRef.current.get(pathToLoad) ?? cachedContent
+              return
+            }
+          }
           const result = await window.ipc.invoke('workspace:readFile', { path: pathToLoad })
           if (cancelled || fileLoadRequestIdRef.current !== requestId || selectedPathRef.current !== pathToLoad) return
           setFileContent(result.data)
@@ -916,6 +971,7 @@ function App() {
             setEditorContent(result.data)
             if (pathToLoad.endsWith('.md')) {
               setEditorCacheForPath(pathToLoad, result.data)
+              mtimeByPathRef.current.set(pathToLoad, result.stat.mtimeMs)
             }
             editorContentRef.current = result.data
             editorPathRef.current = pathToLoad
@@ -1088,22 +1144,24 @@ function App() {
     }
   }, [selectedPath, versionHistoryPath])
 
-  // Load runs list (all pages)
+  // Load recent runs list with a hard cap to avoid unbounded growth.
   const loadRuns = useCallback(async () => {
     try {
-      const allRuns: RunListItem[] = []
+      const copilotRuns: RunListItem[] = []
       let cursor: string | undefined = undefined
 
-      // Fetch all pages
+      // Fetch pages until we reach the in-memory cap.
       do {
         const result: ListRunsResponseType = await window.ipc.invoke('runs:list', { cursor })
-        allRuns.push(...result.runs)
+        for (const run of result.runs) {
+          if (run.agentId !== 'copilot') continue
+          copilotRuns.push(run)
+          if (copilotRuns.length >= MAX_RUNS_IN_MEMORY) break
+        }
         cursor = result.nextCursor
-      } while (cursor)
+      } while (cursor && copilotRuns.length < MAX_RUNS_IN_MEMORY)
 
-      // Filter for copilot runs only
-      const copilotRuns = allRuns.filter((run: RunListItem) => run.agentId === 'copilot')
-      setRuns(copilotRuns)
+      setRuns(copilotRuns.slice(0, MAX_RUNS_IN_MEMORY))
     } catch (err) {
       console.error('Failed to load runs:', err)
     }
@@ -2242,7 +2300,9 @@ function App() {
   const appendUnique = useCallback((stack: ViewState[], entry: ViewState) => {
     const last = stack[stack.length - 1]
     if (last && viewStatesEqual(last, entry)) return stack
-    return [...stack, entry]
+    const next = [...stack, entry]
+    if (next.length <= MAX_VIEW_HISTORY) return next
+    return next.slice(next.length - MAX_VIEW_HISTORY)
   }, [])
 
   const ensureFileTabForPath = useCallback((path: string) => {
@@ -3094,6 +3154,7 @@ function App() {
   return (
     <TooltipProvider delayDuration={0}>
       <SidebarSectionProvider defaultSection="tasks">
+        <SyncActivityUiProvider>
         <div className="flex h-svh w-full overflow-hidden">
           {/* Content sidebar with SidebarProvider for collapse functionality */}
           <SidebarProvider
@@ -3547,6 +3608,8 @@ function App() {
               )}
             </SidebarInset>
 
+            <SyncActivityDockedPanel />
+
             {/* Chat sidebar - shown when viewing files/graph */}
             {isRightPaneContext && (
               <ChatSidebar
@@ -3599,6 +3662,7 @@ function App() {
             />
           </SidebarProvider>
         </div>
+        </SyncActivityUiProvider>
         <SearchDialog
           open={isSearchOpen}
           onOpenChange={setIsSearchOpen}

@@ -3,3 +3,6 @@
 .vscode/
 data/
 .venv/
+
+# Draft PR/issue copy and mockups live in a separate subrepo; keep out of this code repo
+.devdocs/

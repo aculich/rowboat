@@ -212,6 +212,11 @@ export function ConnectorsPopover({ children, tooltip, open: openProp, onOpenCha
         }
       }
 
+      // Hydrate in-memory Google client ID from persisted config so Reconnect can skip re-entry
+      if (config.google?.clientId) {
+        setGoogleClientId(config.google.clientId)
+      }
+
       setProviderStatus(statusMap)
     } catch (error) {
       console.error('Failed to check connection statuses:', error)

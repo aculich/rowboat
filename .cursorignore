@@ -1,0 +1,3 @@
+# Intentionally do not list .devdocs/ here. That folder is gitignored for repo hygiene but
+# remains available in the editor and to the AI; see .cursorindexingignore for indexing.
+

@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, shell, app } from 'electron';
+import { ipcMain, BrowserWindow, shell, app, webContents } from 'electron';
 import { ipc } from '@x/shared';
 import path from 'node:path';
 import os from 'node:os';
@@ -14,6 +14,7 @@ import * as runsCore from '@x/core/dist/runs/runs.js';
 import { bus } from '@x/core/dist/runs/bus.js';
 import { serviceBus } from '@x/core/dist/services/service_bus.js';
 import type { FSWatcher } from 'chokidar';
+import type { Dirent } from 'node:fs';
 import fs from 'node:fs/promises';
 import z from 'zod';
 import { RunEvent } from '@x/shared/dist/runs.js';
@@ -25,6 +26,9 @@ import type { IModelConfigRepo } from '@x/core/dist/models/repo.js';
 import type { IOAuthRepo } from '@x/core/dist/auth/repo.js';
 import { IGranolaConfigRepo } from '@x/core/dist/knowledge/granola/repo.js';
 import { triggerSync as triggerGranolaSync } from '@x/core/dist/knowledge/granola/sync.js';
+import { triggerSync as triggerGmailSync } from '@x/core/dist/knowledge/sync_gmail.js';
+import { triggerSync as triggerCalendarSync } from '@x/core/dist/knowledge/sync_calendar.js';
+import { triggerSync as triggerFirefliesSync } from '@x/core/dist/knowledge/sync_fireflies.js';
 import { isOnboardingComplete, markOnboardingComplete } from '@x/core/dist/config/note_creation_config.js';
 import * as composioHandler from './composio-handler.js';
 import { IAgentScheduleRepo } from '@x/core/dist/agent-schedule/repo.js';
@@ -122,6 +126,256 @@ function getBuildInfo(): {
     forkName: process.env.ROWBOAT_FORK_NAME ?? 'rowboatlabs',
     upstreamRelease: process.env.ROWBOAT_UPSTREAM_RELEASE ?? '',
   };
+}
+
+function toNumberRecord(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === 'number' && Number.isFinite(item)) {
+      out[key] = item;
+    }
+  }
+  return out;
+}
+
+const MEMORY_LOG_DIR = path.join(os.homedir(), '.rowboat', 'logs');
+const MEMORY_LOG_PATH = path.join(MEMORY_LOG_DIR, 'memory-debug.jsonl');
+const MEMORY_LOG_MAX_BYTES = Number.parseInt(process.env.ROWBOAT_MEMORY_LOG_MAX_BYTES ?? '', 10) || 10 * 1024 * 1024;
+const MEMORY_LOG_MAX_ROLLED_FILES = Number.parseInt(process.env.ROWBOAT_MEMORY_LOG_MAX_ROLLED_FILES ?? '', 10) || 5;
+const MEMORY_LOG_RETENTION_DAYS = Number.parseInt(process.env.ROWBOAT_MEMORY_LOG_RETENTION_DAYS ?? '', 10) || 7;
+const MEMORY_LOG_RETENTION_MS = MEMORY_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+const MEMORY_LOG_MAINTENANCE_INTERVAL_MS = 60 * 1000;
+
+let lastMemoryLogMaintenanceAt = 0;
+
+function memoryLogPathAtIndex(index: number): string {
+  if (index <= 0) return MEMORY_LOG_PATH;
+  return `${MEMORY_LOG_PATH}.${index}`;
+}
+
+async function readFileSizeSafe(filePath: string): Promise<number> {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.size;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT') return 0;
+    throw error;
+  }
+}
+
+async function removeFileSafe(filePath: string): Promise<void> {
+  try {
+    await fs.unlink(filePath);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== 'ENOENT') throw error;
+  }
+}
+
+async function renameFileSafe(fromPath: string, toPath: string): Promise<void> {
+  try {
+    await fs.rename(fromPath, toPath);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== 'ENOENT') throw error;
+  }
+}
+
+async function rotateMemoryLogIfNeeded(nextLineBytes: number): Promise<void> {
+  const currentSize = await readFileSizeSafe(MEMORY_LOG_PATH);
+  if (currentSize + nextLineBytes <= MEMORY_LOG_MAX_BYTES) return;
+
+  // Drop the oldest rolled file before shifting.
+  await removeFileSafe(memoryLogPathAtIndex(MEMORY_LOG_MAX_ROLLED_FILES));
+
+  // Shift .N => .N+1 (descending to avoid clobbering).
+  for (let index = MEMORY_LOG_MAX_ROLLED_FILES - 1; index >= 1; index--) {
+    await renameFileSafe(memoryLogPathAtIndex(index), memoryLogPathAtIndex(index + 1));
+  }
+
+  // Move the active log to .1.
+  await renameFileSafe(MEMORY_LOG_PATH, memoryLogPathAtIndex(1));
+}
+
+async function runMemoryLogMaintenanceIfNeeded(nowMs: number): Promise<void> {
+  if (nowMs - lastMemoryLogMaintenanceAt < MEMORY_LOG_MAINTENANCE_INTERVAL_MS) return;
+  lastMemoryLogMaintenanceAt = nowMs;
+
+  let entries: Dirent[] = [];
+  try {
+    entries = await fs.readdir(MEMORY_LOG_DIR, { withFileTypes: true, encoding: 'utf8' });
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT') return;
+    throw error;
+  }
+
+  const basename = path.basename(MEMORY_LOG_PATH);
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (!entry.name.startsWith(basename)) continue;
+
+    const filePath = path.join(MEMORY_LOG_DIR, entry.name);
+    try {
+      const stat = await fs.stat(filePath);
+      if (nowMs - stat.mtimeMs > MEMORY_LOG_RETENTION_MS) {
+        await fs.unlink(filePath);
+      }
+    } catch {
+      // Best effort cleanup.
+    }
+  }
+}
+
+async function getMemoryStats(): Promise<{
+  timestamp: number;
+  processMemory: Record<string, number>;
+  systemMemory: Record<string, number>;
+  appMetrics: Array<{
+    pid: number;
+    type: string;
+    cpuPercent: number | null;
+    idleWakeupsPerSecond: number | null;
+    memory: Record<string, number | null>;
+  }>;
+}> {
+  const processMemoryRaw = await process.getProcessMemoryInfo();
+  const systemMemoryRaw = process.getSystemMemoryInfo();
+  const metrics = app.getAppMetrics();
+
+  const appMetrics = metrics.map((metric) => {
+    const metricRecord = metric as unknown as Record<string, unknown>;
+    const memory = metricRecord.memory as Record<string, unknown> | undefined;
+    const memoryRecord: Record<string, number | null> = {};
+    if (memory && typeof memory === 'object') {
+      for (const [key, value] of Object.entries(memory)) {
+        memoryRecord[key] = typeof value === 'number' && Number.isFinite(value) ? value : null;
+      }
+    }
+
+    const pid = typeof metricRecord.pid === 'number' ? metricRecord.pid : -1;
+    const type = typeof metricRecord.type === 'string' ? metricRecord.type : 'unknown';
+    const cpu = metricRecord.cpu as Record<string, unknown> | undefined;
+
+    return {
+      pid,
+      type,
+      cpuPercent: typeof cpu?.percentCPUUsage === 'number' ? cpu.percentCPUUsage : null,
+      idleWakeupsPerSecond: typeof cpu?.idleWakeupsPerSecond === 'number' ? cpu.idleWakeupsPerSecond : null,
+      memory: memoryRecord,
+    };
+  });
+
+  return {
+    timestamp: Date.now(),
+    processMemory: toNumberRecord(processMemoryRaw),
+    systemMemory: toNumberRecord(systemMemoryRaw),
+    appMetrics,
+  };
+}
+
+function getProcessDiagnostics(): {
+  windows: Array<{
+    id: number;
+    title: string;
+    url: string;
+    isVisible: boolean;
+    isFocused: boolean;
+    isDestroyed: boolean;
+    webContentsId: number;
+  }>;
+  webContents: Array<{
+    id: number;
+    pid: number;
+    type: string;
+    url: string;
+    title: string;
+    isDestroyed: boolean;
+    isFocused: boolean;
+    isDevToolsOpened: boolean;
+    ownerWindowId: number | null;
+    devToolsWebContentsId: number | null;
+    hostWebContentsId: number | null;
+  }>;
+} {
+  const windows = BrowserWindow.getAllWindows().map((win) => ({
+    id: win.id,
+    title: win.getTitle(),
+    url: win.webContents?.getURL?.() ?? '',
+    isVisible: win.isVisible(),
+    isFocused: win.isFocused(),
+    isDestroyed: win.isDestroyed(),
+    webContentsId: win.webContents?.id ?? -1,
+  }));
+
+  const contents = webContents.getAllWebContents().map((wc) => {
+    const ownerWindow = BrowserWindow.fromWebContents(wc);
+    const metricsRecord = wc as unknown as Record<string, unknown>;
+    const devToolsWebContents = metricsRecord.devToolsWebContents as Electron.WebContents | undefined;
+    const hostWebContents = metricsRecord.hostWebContents as Electron.WebContents | undefined;
+
+    return {
+      id: wc.id,
+      pid: wc.getProcessId?.() ?? -1,
+      type: wc.getType(),
+      url: wc.getURL(),
+      title: wc.getTitle(),
+      isDestroyed: wc.isDestroyed(),
+      isFocused: wc.isFocused(),
+      isDevToolsOpened: wc.isDevToolsOpened(),
+      ownerWindowId: ownerWindow?.id ?? null,
+      devToolsWebContentsId: devToolsWebContents?.id ?? null,
+      hostWebContentsId: hostWebContents?.id ?? null,
+    };
+  });
+
+  return {
+    windows,
+    webContents: contents,
+  };
+}
+
+async function appendMemorySample(args: {
+  at: string;
+  rendererHeap: {
+    usedJSHeapSize: number;
+    totalJSHeapSize: number;
+    jsHeapSizeLimit: number;
+  } | null;
+  counters: Record<string, number>;
+  mainMemory: {
+    timestamp: number;
+    processMemory: Record<string, number>;
+    systemMemory: Record<string, number>;
+    appMetrics: Array<{
+      pid: number;
+      type: string;
+      cpuPercent: number | null;
+      idleWakeupsPerSecond: number | null;
+      memory: Record<string, number | null>;
+    }>;
+  };
+}): Promise<{ success: true; path: string }> {
+  const diagnostics = getProcessDiagnostics();
+  const line = JSON.stringify({
+    at: args.at,
+    recordedAt: new Date().toISOString(),
+    rendererHeap: args.rendererHeap,
+    counters: args.counters,
+    mainMemory: args.mainMemory,
+    diagnostics,
+  });
+
+  const lineWithNewline = `${line}\n`;
+  const lineBytes = Buffer.byteLength(lineWithNewline, 'utf8');
+
+  await fs.mkdir(MEMORY_LOG_DIR, { recursive: true });
+  await runMemoryLogMaintenanceIfNeeded(Date.now());
+  await rotateMemoryLogIfNeeded(lineBytes);
+  await fs.appendFile(MEMORY_LOG_PATH, lineWithNewline, 'utf8');
+  return { success: true, path: MEMORY_LOG_PATH };
 }
 
 // ============================================================================
@@ -332,6 +586,15 @@ export function setupIpcHandlers() {
     'app:getBuildInfo': async () => {
       return getBuildInfo();
     },
+    'app:getMemoryStats': async () => {
+      return getMemoryStats();
+    },
+    'app:appendMemorySample': async (_event, args) => {
+      return appendMemorySample(args);
+    },
+    'app:getProcessDiagnostics': async () => {
+      return getProcessDiagnostics();
+    },
     'workspace:getRoot': async () => {
       return workspace.getRoot();
     },
@@ -394,6 +657,13 @@ export function setupIpcHandlers() {
     },
     'runs:delete': async (_event, args) => {
       await runsCore.deleteRun(args.runId);
+      return { success: true };
+    },
+    'services:triggerSync': async () => {
+      triggerGmailSync();
+      triggerCalendarSync();
+      triggerFirefliesSync();
+      triggerGranolaSync();
       return { success: true };
     },
     'models:list': async () => {

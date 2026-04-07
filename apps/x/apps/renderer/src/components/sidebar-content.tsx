@@ -18,6 +18,7 @@ import {
   Pencil,
   Plug,
   LoaderIcon,
+  PanelRight,
   Settings,
   Square,
   Trash2,
@@ -87,8 +88,11 @@ import { ConnectorsPopover } from "@/components/connectors-popover"
 import { HelpPopover } from "@/components/help-popover"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { toast } from "@/lib/toast"
-import { ServiceEvent } from "@x/shared/src/service-events.js"
-import z from "zod"
+import { SERVICE_LABELS } from "@/components/sync-activity/constants"
+import { SyncActivityLogView } from "@/components/sync-activity/sync-activity-log-view"
+import { useSyncActivityUi } from "@/components/sync-activity/sync-activity-ui-context"
+import { SyncActivityForceRefreshButton } from "@/components/sync-activity/sync-activity-force-refresh-button"
+import { SyncActivityVerbosityControl } from "@/components/sync-activity/sync-activity-verbosity-control"
 
 interface TreeNode {
   path: string
@@ -134,20 +138,6 @@ type BackgroundTaskItem = {
   lastRunAt?: string | null
 }
 
-type ServiceEventType = z.infer<typeof ServiceEvent>
-
-const MAX_SYNC_EVENTS = 1000
-const RUN_STALE_MS = 2 * 60 * 60 * 1000
-
-const SERVICE_LABELS: Record<string, string> = {
-  gmail: "Syncing Gmail",
-  calendar: "Syncing Calendar",
-  fireflies: "Syncing Fireflies",
-  granola: "Syncing Granola",
-  graph: "Updating knowledge",
-  voice_memo: "Processing voice memo",
-}
-
 type TasksActions = {
   onNewChat: () => void
   onSelectRun: (runId: string) => void
@@ -175,12 +165,6 @@ const sectionTabs: { id: ActiveSection; label: string }[] = [
   { id: "tasks", label: "Chat" },
   { id: "knowledge", label: "Knowledge" },
 ]
-
-function formatEventTime(ts: string): string {
-  const date = new Date(ts)
-  if (Number.isNaN(date.getTime())) return ""
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-}
 
 function formatRunTime(ts: string): string {
   const date = new Date(ts)
@@ -246,98 +230,41 @@ function SidebarVersion() {
 
 function SyncStatusBar() {
   const { state, isMobile } = useSidebar()
-  const [activeServices, setActiveServices] = useState<Map<string, string>>(new Map())
-  const [popoverOpen, setPopoverOpen] = useState(false)
-  const [logEvents, setLogEvents] = useState<ServiceEventType[]>([])
-  const [logLoading, setLogLoading] = useState(false)
-  const runTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
-
-  // Track active runs from real-time events
-  useEffect(() => {
-    const cleanup = window.ipc.on('services:events', (event) => {
-      const nextEvent = event as ServiceEventType
-      if (nextEvent.type === 'run_start') {
-        setActiveServices((prev) => {
-          const next = new Map(prev)
-          next.set(nextEvent.runId, nextEvent.service)
-          return next
-        })
-        const existingTimeout = runTimeoutsRef.current.get(nextEvent.runId)
-        if (existingTimeout) clearTimeout(existingTimeout)
-        const timeout = setTimeout(() => {
-          setActiveServices((prev) => {
-            if (!prev.has(nextEvent.runId)) return prev
-            const next = new Map(prev)
-            next.delete(nextEvent.runId)
-            return next
-          })
-          runTimeoutsRef.current.delete(nextEvent.runId)
-        }, RUN_STALE_MS)
-        runTimeoutsRef.current.set(nextEvent.runId, timeout)
-      } else if (nextEvent.type === 'run_complete') {
-        setActiveServices((prev) => {
-          const next = new Map(prev)
-          next.delete(nextEvent.runId)
-          return next
-        })
-        const existingTimeout = runTimeoutsRef.current.get(nextEvent.runId)
-        if (existingTimeout) {
-          clearTimeout(existingTimeout)
-          runTimeoutsRef.current.delete(nextEvent.runId)
-        }
-      }
-    })
-    return cleanup
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      runTimeoutsRef.current.forEach((timeout) => clearTimeout(timeout))
-      runTimeoutsRef.current.clear()
-    }
-  }, [])
-
-  // Load logs from JSONL file when popover opens
-  useEffect(() => {
-    if (!popoverOpen) return
-    let cancelled = false
-    async function loadLogs() {
-      setLogLoading(true)
-      try {
-        const result = await window.ipc.invoke('workspace:readFile', {
-          path: 'logs/services.jsonl',
-          encoding: 'utf8',
-        })
-        if (cancelled) return
-        const lines = result.data.trim().split('\n').filter(Boolean)
-        const parsed: ServiceEventType[] = []
-        for (const line of lines) {
-          try {
-            parsed.push(JSON.parse(line))
-          } catch {
-            // skip malformed lines
-          }
-        }
-        // Newest first, limit to 1000
-        setLogEvents(parsed.reverse().slice(0, MAX_SYNC_EVENTS))
-      } catch {
-        if (!cancelled) setLogEvents([])
-      } finally {
-        if (!cancelled) setLogLoading(false)
-      }
-    }
-    loadLogs()
-    return () => { cancelled = true }
-  }, [popoverOpen])
+  const {
+    mode,
+    popoverOpen,
+    setPopoverOpen,
+    logEvents,
+    logLoading,
+    verbosity,
+    activeServices,
+    expandedRowKey,
+    toggleRowExpanded,
+    dockFromPopover,
+    onFooterActivate,
+  } = useSyncActivityUi()
 
   const isSyncing = activeServices.size > 0
   const isCollapsed = state === "collapsed"
 
-  // Build status label from active services
   const activeServiceNames = [...new Set(activeServices.values())]
   const statusLabel = isSyncing
     ? activeServiceNames.map((s) => SERVICE_LABELS[s] || s).join(", ")
     : "All caught up"
+
+  const footerButtonClass =
+    "flex w-full items-center justify-between rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-sidebar-accent"
+
+  const statusRow = (
+    <span className="flex min-w-0 items-center gap-2">
+      {isSyncing ? (
+        <LoaderIcon className="h-3 w-3 shrink-0 animate-spin" />
+      ) : (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
+      )}
+      <span className="truncate">{statusLabel}</span>
+    </span>
+  )
 
   return (
     <>
@@ -351,72 +278,77 @@ function SyncStatusBar() {
         </div>
       )}
       <SidebarFooter className="border-t border-sidebar-border px-2 py-2">
-        <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className="flex w-full items-center justify-between rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-sidebar-accent"
-            >
-              <span className="flex items-center gap-2 min-w-0">
-                {isSyncing ? (
-                  <LoaderIcon className="h-3 w-3 shrink-0 animate-spin" />
-                ) : (
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
-                )}
-                <span className="truncate">{statusLabel}</span>
-              </span>
-              <ChevronRight className="h-3 w-3 shrink-0" />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent
-            side="right"
-            align="end"
-            sideOffset={4}
-            className="w-96 p-0"
+        {mode === "docked" ? (
+          <button
+            type="button"
+            className={footerButtonClass}
+            onClick={onFooterActivate}
+            aria-label="Open sync activity popover"
           >
-            <div className="p-3 border-b">
-              <h4 className="font-semibold text-sm">Sync Activity</h4>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {isSyncing ? statusLabel : "All services up to date"}
-              </p>
-            </div>
-            <div className="max-h-80 overflow-y-auto p-2">
-              {logLoading ? (
-                <div className="flex items-center justify-center py-4">
-                  <LoaderIcon className="h-4 w-4 animate-spin text-muted-foreground" />
+            {statusRow}
+            <ChevronRight className="h-3 w-3 shrink-0" />
+          </button>
+        ) : (
+          <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+            <PopoverTrigger asChild>
+              <button type="button" className={footerButtonClass}>
+                {statusRow}
+                <ChevronRight className="h-3 w-3 shrink-0" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              side="right"
+              align="end"
+              sideOffset={4}
+              className="z-40 flex w-96 flex-col p-0"
+            >
+              <div className="flex items-start justify-between gap-2 border-b p-3">
+                <div className="min-w-0 flex-1">
+                  <h4 className="text-sm font-semibold">Sync Activity</h4>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {isSyncing ? statusLabel : "All services up to date"}
+                  </p>
                 </div>
-              ) : logEvents.length === 0 ? (
-                <div className="py-4 text-center text-xs text-muted-foreground">
-                  No recent activity.
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <SyncActivityVerbosityControl />
+                  <SyncActivityForceRefreshButton tooltipSide="top" />
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          dockFromPopover()
+                        }}
+                        aria-label="Dock to side"
+                      >
+                        <PanelRight className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">Dock to side</TooltipContent>
+                  </Tooltip>
                 </div>
-              ) : (
-                <div className="space-y-0.5">
-                  {logEvents.map((event, idx) => (
-                    <div
-                      key={`${event.runId}-${event.ts}-${idx}`}
-                      className="flex items-start gap-2 rounded px-2 py-1 text-xs hover:bg-accent"
-                    >
-                      <span className="shrink-0 text-[10px] leading-4 text-muted-foreground/70">
-                        {formatEventTime(event.ts)}
-                      </span>
-                      <span className="shrink-0">
-                        <span className={cn(
-                          "inline-block rounded px-1 py-0.5 text-[10px] font-medium leading-none",
-                          event.level === 'error' ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" :
-                          event.level === 'warn' ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" :
-                          "bg-muted text-muted-foreground"
-                        )}>
-                          {SERVICE_LABELS[event.service]?.split(" ").slice(-1)[0] || event.service}
-                        </span>
-                      </span>
-                      <span className="leading-4 text-foreground/80">{event.message}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </PopoverContent>
-        </Popover>
+              </div>
+              <div className="max-h-80 min-h-0 overflow-y-auto p-2">
+                {logLoading ? (
+                  <div className="flex items-center justify-center py-4">
+                    <LoaderIcon className="h-4 w-4 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <SyncActivityLogView
+                    events={logEvents}
+                    verbosity={verbosity}
+                    expandedRowKey={expandedRowKey}
+                    onToggleExpand={toggleRowExpanded}
+                  />
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
       </SidebarFooter>
     </>
   )

@@ -11,7 +11,6 @@ PKG_JSON="$REPO_ROOT/apps/x/package.json"
 # Fetch upstream tags and compute upstream release from merge-base with upstream/main
 git -C "$REPO_ROOT" fetch upstream --tags 2>/dev/null || true
 
-UPSTREAM_MAIN_SHA=$(git -C "$REPO_ROOT" rev-parse upstream/main 2>/dev/null || echo '')
 UPSTREAM_MAIN_SHORT=$(git -C "$REPO_ROOT" rev-parse --short upstream/main 2>/dev/null || echo 'unknown')
 
 MB=$(git -C "$REPO_ROOT" merge-base HEAD upstream/main 2>/dev/null || true)

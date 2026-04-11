@@ -2,6 +2,40 @@
   <img width="1339" height="607" alt="rowboat-github-2" src="https://github.com/user-attachments/assets/fc463b99-01b3-401c-b4a4-044dad480901" />
 </a>
 
+---
+
+## How this fork differs from upstream
+
+This repo ([**aculich/rowboat**](https://github.com/aculich/rowboat)) is a personal fork of [**rowboatlabs/rowboat**](https://github.com/rowboatlabs/rowboat). It tracks upstream closely, opens small focused PRs there, and also carries **combined** work on a private integration branch (**`develop`**) plus fork-local tooling that is **not** necessarily filed as upstream PRs.
+
+### Upstream pull requests ([author: aculich](https://github.com/rowboatlabs/rowboat/pulls?q=is%3Apr+author%3Aaculich+))
+
+| Status | PR | What it does |
+|--------|-----|----------------|
+| **Merged** (2026-04-09) | [#431](https://github.com/rowboatlabs/rowboat/pull/431) | Google OAuth: preserve full callback URL (e.g. `iss`) for token exchange, persist Client ID, refresh/error handling — released upstream as [**v0.2.1**](https://github.com/rowboatlabs/rowboat/releases/tag/v0.2.1). |
+| **Open** | [#429](https://github.com/rowboatlabs/rowboat/pull/429) | Renderer: stop empty Tiptap init from polluting the editor cache (blank file on first open). |
+| **Open** | [#430](https://github.com/rowboatlabs/rowboat/pull/430) | Editor: `StarterKit.configure({ link: false })` so custom `Link` is the only registration (duplicate extension warning). |
+| **Open** | [#436](https://github.com/rowboatlabs/rowboat/pull/436) | Granola: incremental sync (`updated_since`) and early termination when the API returns unchanged pages. |
+
+### Upstream issues ([author: aculich](https://github.com/rowboatlabs/rowboat/issues?q=is%3Aissue+author%3Aaculich+))
+
+| Status | Issue | Notes |
+|--------|-------|--------|
+| **Closed** | [#432](https://github.com/rowboatlabs/rowboat/issues/432) | Google OAuth “invalid response encountered” — addressed by merged **#431**. |
+| **Open** | [#433](https://github.com/rowboatlabs/rowboat/issues/433) | Duplicate `Link` extension — tracks **#430**. |
+| **Open** | [#434](https://github.com/rowboatlabs/rowboat/issues/434) | External file changes not detected on tab switch — related follow-up work is coordinated with **#429**. |
+| **Open** | [#435](https://github.com/rowboatlabs/rowboat/issues/435) | Granola full-history sync cost — tracks **#436**. |
+
+### `develop` and fork-only convenience (not upstream PRs)
+
+- **`develop`**: main integration branch for **local** work — combining fixes/features and validating them together before they land individually on minimal `pr/*` branches for upstream. Expect extra commits here that will never be pushed as a single upstream PR.
+- **[`dev.sh`](./dev.sh)**: fork-local dev entrypoint — `git fetch` **upstream** tags, print merge-base / ahead–behind vs **`upstream/main`**, derive dev version metadata from the upstream tag at merge-base, then run the Electron dev app. Helps when rebasing and staying oriented relative to upstream.
+- **Sync / rebase workflow**: standard `git fetch upstream` + merge or rebase on `main`; if you use the companion **rowboat-quickstart** workspace (parent of `rowboat__aculich/`), run **`./scripts/sync-upstream.sh`** from that root (optional `--rebase`) — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+Prebuilt installers that bundle several of the **open** upstream PRs ahead of an official release are under [**Fork Dev Releases**](#fork-dev-releases-aculich) below.
+
+---
+
 <h5 align="center">
 
 <p align="center" style="display: flex; justify-content: center; gap: 20px; align-items: center;">
@@ -52,10 +86,10 @@ You can do things like:
 **All dev releases:** https://github.com/aculich/rowboat/releases
 
 ### Fixes in this build:
-- **Granola incremental sync** - Early termination after unchanged docs ([PR #436](https://github.com/rowboatlabs/rowboat/pull/436))
-- **Google OAuth callback** - Preserve full URL for token exchange ([PR #431](https://github.com/rowboatlabs/rowboat/pull/431))
-- **Tiptap duplicate link** - Disable StarterKit Link extension ([PR #430](https://github.com/rowboatlabs/rowboat/pull/430))
-- **External file detection** - Validate mtime on tab switch ([PR #429](https://github.com/rowboatlabs/rowboat/pull/429))
+- **Granola incremental sync** — early termination after unchanged docs ([PR #436](https://github.com/rowboatlabs/rowboat/pull/436), open upstream)
+- **Google OAuth callback** — full callback URL + Client ID persistence ([#431](https://github.com/rowboatlabs/rowboat/pull/431), **merged** upstream as [v0.2.1](https://github.com/rowboatlabs/rowboat/releases/tag/v0.2.1); this fork build predates that release tag)
+- **Tiptap duplicate link** — disable StarterKit `Link` ([PR #430](https://github.com/rowboatlabs/rowboat/pull/430), open upstream)
+- **Renderer: blank first open** — do not cache empty Tiptap init content ([PR #429](https://github.com/rowboatlabs/rowboat/pull/429), open upstream). **External file / tab-switch detection** is tracked separately as [issue #434](https://github.com/rowboatlabs/rowboat/issues/434) and may exist only on **`develop`** until a dedicated upstream PR lands.
 
 ---
 
